@@ -1,0 +1,84 @@
+{
+    "go.testOnSave": false,
+    "go.coverOnSave": false,
+    "go.lintOnSave": "workspace",
+    "go.vetOnSave": "workspace",
+    "go.buildOnSave": "workspace",
+    "go.useLanguageServer": true,
+    "go.testFlags": [
+        "-v",
+        "-timeout",
+        "30s"
+    ],
+    "go.testEnvVars": {},
+    "go.testTimeout": "30s",
+    "go.coverMode": "atomic",
+    "go.coverageDecorator": {
+        "type": "gutter",
+        "coveredHighlightColor": "rgba(64,128,64,0.5)",
+        "uncoveredHighlightColor": "rgba(128,64,64,0.5)",
+        "coveredGutterStyle": "blockblue",
+        "uncoveredGutterStyle": "blockred"
+    },
+    "go.toolsManagement.autoUpdate": true,
+    "go.formatTool": "goimports",
+    "go.lintTool": "golangci-lint",
+    "go.lintFlags": [
+        "--fast"
+    ],
+    "editor.formatOnSave": true,
+    "editor.codeActionsOnSave": {
+        "source.organizeImports": "explicit"
+    },
+    "[go]": {
+        "editor.formatOnSave": true,
+        "editor.codeActionsOnSave": {
+            "source.organizeImports": "explicit"
+        },
+        "editor.suggest.snippetsPreventQuickSuggestions": false
+    },
+    "[go.mod]": {
+        "editor.formatOnSave": true,
+        "editor.codeActionsOnSave": {
+            "source.organizeImports": "explicit"
+        }
+    },
+    "gopls": {
+        "ui.semanticTokens": true,
+        "ui.completion.usePlaceholders": true,
+        "ui.diagnostic.analyses": {
+            "composites": false,
+            "unusedparams": true,
+            "unusedvariable": true
+        },
+        "formatting.gofumpt": true
+    },
+    "files.watcherExclude": {
+        "**/vendor/**": true
+    },
+    "files.exclude": {
+        "**/.git": true,
+        "**/vendor": false
+    },
+    "search.exclude": {
+        "**/vendor": true,
+        "**/bin": true
+    },
+    "go.alternateTools": {
+        "dlv": "dlv"
+    },
+    "debug.console.fontSize": 14,
+    "debug.internalConsoleOptions": "openOnSessionStart",
+    "testing.automaticallyOpenPeekView": "failureAnywhere",
+    "go.delveConfig": {
+        "dlvLoadConfig": {
+            "followPointers": true,
+            "maxVariableRecurse": 3,
+            "maxStringLen": 400,
+            "maxArrayValues": 400,
+            "maxStructFields": -1
+        },
+        "apiVersion": 2,
+        "showGlobalVariables": false
+    }
+}
