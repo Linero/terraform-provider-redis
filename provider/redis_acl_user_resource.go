@@ -10,6 +10,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/redis/go-redis/v9"
 )
@@ -31,9 +32,10 @@ type RedisAclUserResourceModel struct {
 	PasswordWoVersion types.String `tfsdk:"password_wo_version"`
 	Commands          types.List   `tfsdk:"commands"`
 	Keys              types.List   `tfsdk:"keys"`
-	ReadonlyKeys      types.List   `tfsdk:"readonlyKeys"`
-	WriteonlyKeys     types.List   `tfsdk:"writeonlyKeys"`
+	ReadonlyKeys      types.List   `tfsdk:"readonly_keys"`
+	WriteonlyKeys     types.List   `tfsdk:"writeonly_keys"`
 	Channels          types.List   `tfsdk:"channels"`
+	AclSave           types.Bool   `tfsdk:"acl_save"`
 }
 
 func (r *RedisAclUserResource) Configure(ctx context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
@@ -50,8 +52,16 @@ func (r *RedisAclUserResource) Metadata(ctx context.Context, req resource.Metada
 func (r *RedisAclUserResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		Attributes: map[string]schema.Attribute{
-			"name":    schema.StringAttribute{Required: true, Description: "Name of the ACL user."},
-			"enabled": schema.BoolAttribute{Optional: true, Computed: true, Description: "Whether the ACL user is enabled."},
+			"name": schema.StringAttribute{
+				Required:    true,
+				Description: "Name of the ACL user.",
+			},
+			"enabled": schema.BoolAttribute{
+				Optional:    true,
+				Description: "Whether the ACL user is enabled.",
+				Default:     booldefault.StaticBool(true),
+				Computed:    true,
+			},
 			"password_wo": schema.StringAttribute{
 				Required:    true,
 				Sensitive:   true,
@@ -74,13 +84,13 @@ func (r *RedisAclUserResource) Schema(ctx context.Context, req resource.SchemaRe
 				ElementType: types.StringType,
 				Description: "Key patterns the user can access (without ~ prefix).",
 			},
-			"readonlyKeys": schema.ListAttribute{
+			"readonly_keys": schema.ListAttribute{
 				Optional:    true,
 				Computed:    true,
 				ElementType: types.StringType,
 				Description: "Key patterns the user can only read (without %R~ prefix).",
 			},
-			"writeonlyKeys": schema.ListAttribute{
+			"writeonly_keys": schema.ListAttribute{
 				Optional:    true,
 				Computed:    true,
 				ElementType: types.StringType,
@@ -92,6 +102,12 @@ func (r *RedisAclUserResource) Schema(ctx context.Context, req resource.SchemaRe
 				ElementType: types.StringType,
 				Description: "Pub/Sub channel patterns the user can access (without & prefix).",
 			},
+			"acl_save": schema.BoolAttribute{
+				Optional:    true,
+				Description: "Whether to save the ACL user configuration.",
+				Default:     booldefault.StaticBool(true),
+				Computed:    true,
+			},
 		},
 	}
 }
@@ -101,14 +117,26 @@ func (r *RedisAclUserResource) ImportState(ctx context.Context, req resource.Imp
 }
 
 func (r *RedisAclUserResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
-	var plan RedisAclUserResourceModel
-	diags := req.Plan.Get(ctx, &plan)
-	resp.Diagnostics.Append(diags...)
+	var plan, config RedisAclUserResourceModel
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	resp.Diagnostics.Append(req.Config.Get(ctx, &config)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	_, err := r.AclSetUser(&plan, ctx)
+	if _, err := r.AclGetUser(plan.Name.ValueString(), ctx); err == nil {
+		resp.Diagnostics.AddError("User already exists", fmt.Sprintf("ACL user '%s' already exists, consider importing it", plan.Name.ValueString()))
+		return
+	}
+
+	if config.PasswordWo.IsNull() && config.PasswordWo.IsUnknown() {
+		resp.Diagnostics.AddError("Failed to create ACL user", "password_wo is null or empty")
+		return
+	}
+
+	passwordHash := hashPassword(config.PasswordWo.ValueString())
+
+	_, err := r.AclSetUser(&plan, ctx, []string{passwordHash})
 
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to create ACL user", err.Error())
@@ -147,16 +175,36 @@ func (r *RedisAclUserResource) Read(ctx context.Context, req resource.ReadReques
 }
 
 func (r *RedisAclUserResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
-	var plan, state RedisAclUserResourceModel
+	var plan, state, config RedisAclUserResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	resp.Diagnostics.Append(req.Config.Get(ctx, &config)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	_, err := r.AclSetUser(&plan, ctx)
-
+	aclData, err := r.AclGetUser(state.Name.ValueString(), ctx)
 	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			resp.State.RemoveResource(ctx)
+			return
+		}
+		resp.Diagnostics.AddError("Failed to read ACL user", err.Error())
+		return
+	}
+
+	aclMap := parseAclDataToMap(aclData)
+
+	passwordHashes := parsePasswordHashesFromAclMap(aclMap)
+
+	if plan.PasswordWoVersion.ValueString() != state.PasswordWoVersion.ValueString() {
+		if !config.PasswordWo.IsNull() && !config.PasswordWo.IsUnknown() {
+			passwordHash := hashPassword(config.PasswordWo.ValueString())
+			passwordHashes = []string{passwordHash}
+		}
+	}
+
+	if _, err := r.AclSetUser(&plan, ctx, passwordHashes); err != nil {
 		resp.Diagnostics.AddError("Failed to update ACL user", err.Error())
 		return
 	}
@@ -171,7 +219,7 @@ func (r *RedisAclUserResource) Delete(ctx context.Context, req resource.DeleteRe
 		return
 	}
 
-	_, err := r.AclDelUser(state.Name.ValueString(), ctx)
+	_, err := r.AclDelUser(state.Name.ValueString(), ctx, state.AclSave.ValueBool())
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to delete ACL user", err.Error())
 		return
@@ -192,21 +240,40 @@ func (r *RedisAclUserResource) AclGetUser(username string, ctx context.Context) 
 	return aclData, nil
 }
 
-func (r *RedisAclUserResource) AclSetUser(model *RedisAclUserResourceModel, ctx context.Context) (bool, error) {
+func (r *RedisAclUserResource) AclSetUser(model *RedisAclUserResourceModel, ctx context.Context, hashedPasswords []string) (bool, error) {
 	client := r.redisClient()
-	rules := buildACLRules(model)
+	rules := buildACLRules(model, hashedPasswords)
 	username := model.Name.ValueString()
 	args := append([]any{"ACL", "SETUSER", username}, toAny(rules)...)
 
 	if err := client.Do(ctx, args...).Err(); err != nil {
 		return false, err
 	}
+	if model.AclSave.ValueBool() {
+		if _, err := r.AclSave(ctx); err != nil {
+			return false, err
+		}
+	}
 	return true, nil
 }
 
-func (r *RedisAclUserResource) AclDelUser(username string, ctx context.Context) (bool, error) {
+func (r *RedisAclUserResource) AclDelUser(username string, ctx context.Context, saveChanges bool) (bool, error) {
 	client := r.redisClient()
 	if err := client.Do(ctx, "ACL", "DELUSER", username).Err(); err != nil {
+		return false, err
+	}
+	if saveChanges {
+		if _, err := r.AclSave(ctx); err != nil {
+			return false, err
+		}
+	}
+	return true, nil
+}
+
+func (r *RedisAclUserResource) AclSave(ctx context.Context) (bool, error) {
+	client := r.redisClient()
+
+	if err := client.Do(ctx, "ACL", "SAVE").Err(); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -247,6 +314,20 @@ func loadAclMapIntoState(ctx context.Context, aclMap map[string]any, state *Redi
 	}
 
 	return nil
+}
+
+func parsePasswordHashesFromAclMap(aclMap map[string]any) []string {
+	passwordsData, ok := aclMap["passwords"].([]any)
+	if !ok {
+		return []string{}
+	}
+	passwords := []string{}
+	for _, password := range passwordsData {
+		if passwordStr, ok := password.(string); ok {
+			passwords = append(passwords, passwordStr)
+		}
+	}
+	return passwords
 }
 
 func parseEnabledFromFlags(aclMap map[string]any) bool {
@@ -338,7 +419,13 @@ func convertToTypesList(ctx context.Context, items []string, diags *diag.Diagnos
 	return types.ListNull(types.StringType), nil
 }
 
-func buildACLRules(m *RedisAclUserResourceModel) []string {
+func hashPassword(password string) string {
+	hash := sha256.Sum256([]byte(password))
+	hashString := fmt.Sprintf("%x", hash)
+	return hashString
+}
+
+func buildACLRules(m *RedisAclUserResourceModel, hashedPasswords []string) []string {
 	rules := []string{}
 
 	rules = append(rules, "reset")
@@ -349,10 +436,8 @@ func buildACLRules(m *RedisAclUserResourceModel) []string {
 		rules = append(rules, "off")
 	}
 
-	if !m.PasswordWo.IsNull() && !m.PasswordWo.IsUnknown() {
-		hash := sha256.Sum256([]byte(m.PasswordWo.ValueString()))
-		hashString := fmt.Sprintf("%x", hash)
-		rules = append(rules, "#"+hashString)
+	for _, hashedPassword := range hashedPasswords {
+		rules = append(rules, "#"+hashedPassword)
 	}
 
 	appendList := func(prefix string, list []types.String, defaultVal string) {

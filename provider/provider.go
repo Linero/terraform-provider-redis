@@ -35,11 +35,11 @@ func (p *RedisProvider) Schema(ctx context.Context, req provider.SchemaRequest, 
 			"address": schema.StringAttribute{
 				Required: true,
 			},
-			"Username": schema.StringAttribute{
+			"username": schema.StringAttribute{
 				Required:  true,
 				Sensitive: true,
 			},
-			"Password": schema.StringAttribute{
+			"password": schema.StringAttribute{
 				Required:  true,
 				Sensitive: true,
 			},

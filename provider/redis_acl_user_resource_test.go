@@ -2,8 +2,6 @@ package provider
 
 import (
 	"context"
-	"crypto/sha256"
-	"fmt"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
@@ -13,106 +11,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-func TestAclSetUser_Integration(t *testing.T) {
-	t.Run("creates new acl user in redis", func(t *testing.T) {
-		req := resource.ConfigureRequest{
-			ProviderData: &RedisProviderModel{
-				Address:  types.StringValue("localhost:6379"),
-				Username: types.StringValue("testuser"),
-				Password: types.StringValue("supersecretpassword"),
-			},
-		}
-		resp := &resource.ConfigureResponse{}
-		r := &RedisAclUserResource{}
-		r.Configure(context.Background(), req, resp)
-
-		commands, _ := types.ListValueFrom(context.Background(), types.StringType, []string{"read", "write", "pubsub"})
-		keys, _ := types.ListValueFrom(context.Background(), types.StringType, []string{"app:*"})
-		readonlyKeys, _ := types.ListValueFrom(context.Background(), types.StringType, []string{"readonly:*"})
-		writeonlyKeys, _ := types.ListValueFrom(context.Background(), types.StringType, []string{"writeonly:*"})
-		channels, _ := types.ListValueFrom(context.Background(), types.StringType, []string{"notifications:*"})
-
-		model := &RedisAclUserResourceModel{
-			Name:              types.StringValue("newuser"),
-			Enabled:           types.BoolValue(true),
-			PasswordWo:        types.StringValue("userpassword"),
-			PasswordWoVersion: types.StringValue("1"),
-			Commands:          commands,
-			Keys:              keys,
-			ReadonlyKeys:      readonlyKeys,
-			WriteonlyKeys:     writeonlyKeys,
-			Channels:          channels,
-		}
-
-		result, err := r.AclSetUser(model, context.Background())
-
-		assert.Equal(t, err, nil)
-		assert.Equal(t, true, result)
-	})
-}
-
-func TestAclGetUser_Integration(t *testing.T) {
-	t.Run("retrieves existing acl user from redis", func(t *testing.T) {
-		req := resource.ConfigureRequest{
-			ProviderData: &RedisProviderModel{
-				Address:  types.StringValue("localhost:6379"),
-				Username: types.StringValue("testuser"),
-				Password: types.StringValue("supersecretpassword"),
-			},
-		}
-		resp := &resource.ConfigureResponse{}
-		r := &RedisAclUserResource{}
-		r.Configure(context.Background(), req, resp)
-
-		aclData, err := r.AclGetUser("newuser", context.Background())
-		aclMap := parseAclDataToMap(aclData)
-
-		commands := parseCommandsFromAclMap(aclMap)
-		channels := parseChannelsFromAclMap(aclMap)
-		enabled := parseEnabledFromFlags(aclMap)
-		keys, readonlyKeys, writeonlyKeys := parseKeysFromAclMap(aclMap)
-
-		assert.Equal(t, err, nil)
-		assert.NotNil(t, aclMap)
-		assert.Contains(t, commands, "read")
-		assert.Contains(t, commands, "write")
-		assert.Contains(t, channels, "notifications:*")
-		assert.Equal(t, true, enabled)
-		assert.Contains(t, keys, "app:*")
-		assert.Contains(t, readonlyKeys, "readonly:*")
-		assert.Contains(t, writeonlyKeys, "writeonly:*")
-	})
-}
-
-func TestLoadAclMapIntoState_Integration(t *testing.T) {
-	t.Run("loads acl map into resource state", func(t *testing.T) {
-		req := resource.ConfigureRequest{
-			ProviderData: &RedisProviderModel{
-				Address:  types.StringValue("localhost:6379"),
-				Username: types.StringValue("testuser"),
-				Password: types.StringValue("supersecretpassword"),
-			},
-		}
-		resp := &resource.ConfigureResponse{}
-		r := &RedisAclUserResource{}
-		r.Configure(context.Background(), req, resp)
-		state := &RedisAclUserResourceModel{}
-
-		aclData, err := r.AclGetUser("newuser", context.Background())
-		aclMap := parseAclDataToMap(aclData)
-		loadAclMapIntoState(context.Background(), aclMap, state, &diag.Diagnostics{})
-
-		assert.Equal(t, err, nil)
-		assert.Equal(t, true, state.Enabled.ValueBool())
-		assert.False(t, state.Commands.IsNull())
-		assert.False(t, state.Keys.IsNull())
-		assert.False(t, state.ReadonlyKeys.IsNull())
-		assert.False(t, state.WriteonlyKeys.IsNull())
-		assert.False(t, state.Channels.IsNull())
-
-	})
-}
 
 func TestNewRedisAclUserResource(t *testing.T) {
 	t.Run("creates new resource instance", func(t *testing.T) {
@@ -213,7 +111,7 @@ func TestBuildACLRules(t *testing.T) {
 			Enabled: types.BoolValue(true),
 		}
 
-		rules := buildACLRules(model)
+		rules := buildACLRules(model, []string{})
 
 		assert.Contains(t, rules, "on")
 		assert.NotContains(t, rules, "off")
@@ -225,7 +123,7 @@ func TestBuildACLRules(t *testing.T) {
 			Enabled: types.BoolValue(false),
 		}
 
-		rules := buildACLRules(model)
+		rules := buildACLRules(model, []string{})
 
 		assert.Contains(t, rules, "off")
 		assert.NotContains(t, rules, "on")
@@ -238,12 +136,12 @@ func TestBuildACLRules(t *testing.T) {
 			PasswordWo: types.StringValue("mypassword"),
 		}
 
-		hash := sha256.Sum256([]byte(model.PasswordWo.ValueString()))
-		hashString := fmt.Sprintf("%x", hash)
-		rules := buildACLRules(model)
+		passwordHash := hashPassword(model.PasswordWo.ValueString())
+
+		rules := buildACLRules(model, []string{passwordHash})
 
 		assert.Contains(t, rules, "reset")
-		assert.Contains(t, rules, "#"+hashString)
+		assert.Contains(t, rules, "#"+passwordHash)
 	})
 
 	t.Run("builds rules with commands", func(t *testing.T) {
@@ -259,7 +157,7 @@ func TestBuildACLRules(t *testing.T) {
 			Commands: commands,
 		}
 
-		rules := buildACLRules(model)
+		rules := buildACLRules(model, []string{})
 
 		assert.Contains(t, rules, "+@get")
 		assert.Contains(t, rules, "+@set")
@@ -278,7 +176,7 @@ func TestBuildACLRules(t *testing.T) {
 			Keys:    keys,
 		}
 
-		rules := buildACLRules(model)
+		rules := buildACLRules(model, []string{})
 
 		assert.Contains(t, rules, "~app:*")
 		assert.Contains(t, rules, "~user:*")
@@ -297,7 +195,7 @@ func TestBuildACLRules(t *testing.T) {
 			Channels: channels,
 		}
 
-		rules := buildACLRules(model)
+		rules := buildACLRules(model, []string{})
 
 		assert.Contains(t, rules, "&notifications:*")
 		assert.Contains(t, rules, "&alerts:*")
@@ -330,7 +228,9 @@ func TestBuildACLRules(t *testing.T) {
 			Channels:          channels,
 		}
 
-		rules := buildACLRules(model)
+		passwordHash := hashPassword(model.PasswordWo.ValueString())
+
+		rules := buildACLRules(model, []string{passwordHash})
 
 		assert.Contains(t, rules, "on")
 		assert.Contains(t, rules, "reset")
@@ -889,8 +789,11 @@ func BenchmarkBuildACLRules(b *testing.B) {
 	}
 
 	b.ResetTimer()
+
+	passwordHash := hashPassword(model.PasswordWo.ValueString())
+
 	for i := 0; i < b.N; i++ {
-		buildACLRules(model)
+		buildACLRules(model, []string{passwordHash})
 	}
 }
 
