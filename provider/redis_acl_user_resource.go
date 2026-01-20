@@ -11,6 +11,8 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/listplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/redis/go-redis/v9"
 )
@@ -77,30 +79,45 @@ func (r *RedisAclUserResource) Schema(ctx context.Context, req resource.SchemaRe
 				Computed:    true,
 				ElementType: types.StringType,
 				Description: "ACL commands for the user (e.g., 'read', 'write', 'admin').",
+				PlanModifiers: []planmodifier.List{
+					listplanmodifier.UseStateForUnknown(),
+				},
 			},
 			"keys": schema.ListAttribute{
 				Optional:    true,
 				Computed:    true,
 				ElementType: types.StringType,
 				Description: "Key patterns the user can access (without ~ prefix).",
+				PlanModifiers: []planmodifier.List{
+					listplanmodifier.UseStateForUnknown(),
+				},
 			},
 			"readonly_keys": schema.ListAttribute{
 				Optional:    true,
 				Computed:    true,
 				ElementType: types.StringType,
 				Description: "Key patterns the user can only read (without %R~ prefix).",
+				PlanModifiers: []planmodifier.List{
+					listplanmodifier.UseStateForUnknown(),
+				},
 			},
 			"writeonly_keys": schema.ListAttribute{
 				Optional:    true,
 				Computed:    true,
 				ElementType: types.StringType,
 				Description: "Key patterns the user can only write (without %W~ prefix).",
+				PlanModifiers: []planmodifier.List{
+					listplanmodifier.UseStateForUnknown(),
+				},
 			},
 			"channels": schema.ListAttribute{
 				Optional:    true,
 				Computed:    true,
 				ElementType: types.StringType,
 				Description: "Pub/Sub channel patterns the user can access (without & prefix).",
+				PlanModifiers: []planmodifier.List{
+					listplanmodifier.UseStateForUnknown(),
+				},
 			},
 			"acl_save": schema.BoolAttribute{
 				Optional:    true,
@@ -367,8 +384,12 @@ func parseKeysFromAclMap(aclMap map[string]any) (keys, readonlyKeys, writeonlyKe
 	keysDataStr, ok := aclMap["keys"].(string)
 	keysData := strings.Split(keysDataStr, " ")
 	if !ok {
-		return nil, nil, nil
+		return []string{}, []string{}, []string{}
 	}
+
+	keys = []string{}
+	readonlyKeys = []string{}
+	writeonlyKeys = []string{}
 
 	for _, keyStr := range keysData {
 		if after, ok0 := strings.CutPrefix(keyStr, "%R~"); ok0 {
@@ -376,10 +397,7 @@ func parseKeysFromAclMap(aclMap map[string]any) (keys, readonlyKeys, writeonlyKe
 		} else if after0, ok1 := strings.CutPrefix(keyStr, "%W~"); ok1 {
 			writeonlyKeys = append(writeonlyKeys, after0)
 		} else if after1, ok2 := strings.CutPrefix(keyStr, "~"); ok2 {
-			trimmed := after1
-			if trimmed != "*" {
-				keys = append(keys, trimmed)
-			}
+			keys = append(keys, after1)
 		}
 
 	}
@@ -397,10 +415,7 @@ func parseChannelsFromAclMap(aclMap map[string]any) []string {
 	var channelStrs []string
 	for _, channelStr := range channels {
 		if after, ok0 := strings.CutPrefix(channelStr, "&"); ok0 {
-			trimmed := after
-			if trimmed != "*" {
-				channelStrs = append(channelStrs, trimmed)
-			}
+			channelStrs = append(channelStrs, after)
 		}
 	}
 
@@ -416,7 +431,9 @@ func convertToTypesList(ctx context.Context, items []string, diags *diag.Diagnos
 		}
 		return list, nil
 	}
-	return types.ListNull(types.StringType), nil
+	emptyList, listDiags := types.ListValueFrom(ctx, types.StringType, []string{})
+	diags.Append(listDiags...)
+	return emptyList, nil
 }
 
 func hashPassword(password string) string {
@@ -440,25 +457,21 @@ func buildACLRules(m *RedisAclUserResourceModel, hashedPasswords []string) []str
 		rules = append(rules, "#"+hashedPassword)
 	}
 
-	appendList := func(prefix string, list []types.String, defaultVal string) {
-		if len(list) == 0 && defaultVal != "" {
-			rules = append(rules, prefix+defaultVal)
-			return
-		}
+	appendList := func(prefix string, list []types.String) {
 		for _, v := range list {
 			rules = append(rules, prefix+v.ValueString())
 		}
 	}
-	appendList("~", toStringList(m.Keys), "*")
-	appendList("%R~", toStringList(m.ReadonlyKeys), "")
-	appendList("%W~", toStringList(m.WriteonlyKeys), "")
-	appendList("&", toStringList(m.Channels), "*")
+	appendList("~", toStringList(m.Keys))
+	appendList("%R~", toStringList(m.ReadonlyKeys))
+	appendList("%W~", toStringList(m.WriteonlyKeys))
+	appendList("&", toStringList(m.Channels))
 
 	commands := toStringList(m.Commands)
 	if stringInList("all", commands) {
 		rules = append(rules, "+@all")
 	} else {
-		appendList("+@", commands, "read")
+		appendList("+@", commands)
 	}
 
 	return rules

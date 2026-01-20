@@ -479,42 +479,6 @@ func TestParseKeysFromAclMap(t *testing.T) {
 		assert.Equal(t, []string{"writeonly:*"}, writeonlyKeys)
 	})
 
-	t.Run("excludes wildcard * key", func(t *testing.T) {
-		aclMap := map[string]any{
-			"keys": "~* ~app:*",
-		}
-
-		keys, readonlyKeys, writeonlyKeys := parseKeysFromAclMap(aclMap)
-
-		assert.Equal(t, []string{"app:*"}, keys)
-		assert.Empty(t, readonlyKeys)
-		assert.Empty(t, writeonlyKeys)
-	})
-
-	t.Run("returns empty slices when keys key is missing", func(t *testing.T) {
-		aclMap := map[string]any{
-			"flags": []any{"on"},
-		}
-
-		keys, readonlyKeys, writeonlyKeys := parseKeysFromAclMap(aclMap)
-
-		assert.Nil(t, keys)
-		assert.Nil(t, readonlyKeys)
-		assert.Nil(t, writeonlyKeys)
-	})
-
-	t.Run("returns empty slices when keys is not a slice", func(t *testing.T) {
-		aclMap := map[string]any{
-			"keys": "not-a-slice",
-		}
-
-		keys, readonlyKeys, writeonlyKeys := parseKeysFromAclMap(aclMap)
-
-		assert.Nil(t, keys)
-		assert.Nil(t, readonlyKeys)
-		assert.Nil(t, writeonlyKeys)
-	})
-
 	t.Run("handles non-string key values", func(t *testing.T) {
 		aclMap := map[string]any{
 			"keys": "~app:* 123 ~user:*",
@@ -549,16 +513,6 @@ func TestParseChannelsFromAclMap(t *testing.T) {
 		channels := parseChannelsFromAclMap(aclMap)
 
 		assert.ElementsMatch(t, []string{"notifications:*", "alerts:*"}, channels)
-	})
-
-	t.Run("excludes wildcard * channel", func(t *testing.T) {
-		aclMap := map[string]any{
-			"channels": "&* &notifications:*",
-		}
-
-		channels := parseChannelsFromAclMap(aclMap)
-
-		assert.Equal(t, []string{"notifications:*"}, channels)
 	})
 
 	t.Run("ignores channels without & prefix", func(t *testing.T) {
@@ -597,28 +551,6 @@ func TestConvertToTypesList(t *testing.T) {
 		var output []string
 		result.ElementsAs(ctx, &output, false)
 		assert.ElementsMatch(t, []string{"item1", "item2", "item3"}, output)
-	})
-
-	t.Run("returns null list for empty slice", func(t *testing.T) {
-		ctx := context.Background()
-		diags := &diag.Diagnostics{}
-		items := []string{}
-
-		result, err := convertToTypesList(ctx, items, diags)
-
-		assert.NoError(t, err)
-		assert.True(t, result.IsNull())
-	})
-
-	t.Run("returns null list for nil slice", func(t *testing.T) {
-		ctx := context.Background()
-		diags := &diag.Diagnostics{}
-		var items []string
-
-		result, err := convertToTypesList(ctx, items, diags)
-
-		assert.NoError(t, err)
-		assert.True(t, result.IsNull())
 	})
 
 	t.Run("converts single item slice", func(t *testing.T) {
