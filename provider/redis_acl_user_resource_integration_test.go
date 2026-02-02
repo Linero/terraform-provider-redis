@@ -27,7 +27,9 @@ func TestAclSetUser_Integration(t *testing.T) {
 		r := &RedisAclUserResource{}
 		r.Configure(context.Background(), req, resp)
 
-		commands, _ := types.ListValueFrom(context.Background(), types.StringType, []string{"read", "write", "pubsub"})
+		categories, _ := types.ListValueFrom(context.Background(), types.StringType, []string{"read", "write", "pubsub"})
+		commands, _ := types.ListValueFrom(context.Background(), types.StringType, []string{"config|get"})
+		excludedCommands, _ := types.ListValueFrom(context.Background(), types.StringType, []string{"config|set"})
 		keys, _ := types.ListValueFrom(context.Background(), types.StringType, []string{"app:*"})
 		readonlyKeys, _ := types.ListValueFrom(context.Background(), types.StringType, []string{"readonly:*"})
 		writeonlyKeys, _ := types.ListValueFrom(context.Background(), types.StringType, []string{"writeonly:*"})
@@ -38,7 +40,9 @@ func TestAclSetUser_Integration(t *testing.T) {
 			Enabled:           types.BoolValue(true),
 			PasswordWo:        types.StringValue("userpassword"),
 			PasswordWoVersion: types.StringValue("1"),
+			Categories:        categories,
 			Commands:          commands,
+			ExcludedCommands:  excludedCommands,
 			Keys:              keys,
 			ReadonlyKeys:      readonlyKeys,
 			WriteonlyKeys:     writeonlyKeys,
@@ -74,15 +78,17 @@ func TestAclGetUser_Integration(t *testing.T) {
 		aclData, err := r.AclGetUser("newuser", context.Background())
 		aclMap := parseAclDataToMap(aclData)
 
-		commands := parseCommandsFromAclMap(aclMap)
+		categories, commands, excludedCommands := parseCommandsFromAclMap(aclMap)
 		channels := parseChannelsFromAclMap(aclMap)
 		enabled := parseEnabledFromFlags(aclMap)
 		keys, readonlyKeys, writeonlyKeys := parseKeysFromAclMap(aclMap)
 
 		assert.Equal(t, err, nil)
 		assert.NotNil(t, aclMap)
-		assert.Contains(t, commands, "read")
-		assert.Contains(t, commands, "write")
+		assert.Contains(t, categories, "read")
+		assert.Contains(t, categories, "write")
+		assert.Contains(t, commands, "config|get")
+		assert.Contains(t, excludedCommands, "config|set")
 		assert.Contains(t, channels, "notifications:*")
 		assert.Equal(t, true, enabled)
 		assert.Contains(t, keys, "app:*")
@@ -114,7 +120,9 @@ func TestLoadAclMapIntoState_Integration(t *testing.T) {
 
 		assert.Equal(t, err, nil)
 		assert.Equal(t, true, state.Enabled.ValueBool())
+		assert.False(t, state.Categories.IsNull())
 		assert.False(t, state.Commands.IsNull())
+		assert.False(t, state.ExcludedCommands.IsNull())
 		assert.False(t, state.Keys.IsNull())
 		assert.False(t, state.ReadonlyKeys.IsNull())
 		assert.False(t, state.WriteonlyKeys.IsNull())

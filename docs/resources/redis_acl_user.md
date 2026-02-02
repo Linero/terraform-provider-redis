@@ -16,7 +16,9 @@ resource "redis_acl_user" "example" {
   enabled             = true
   password_wo         = "strongpassword123"
   password_wo_version = "1"
-  commands            = ["read", "write", "pubsub"]
+  categories          = ["read", "write", "pubsub"]
+  commands            = ["config|get"]
+  excluded_commands   = ["config|set"]
   keys                = ["app:*", "cache:*"]
   readonly_keys       = ["readonly:*"]
   writeonly_keys      = ["writeonly:*"]
@@ -36,9 +38,11 @@ resource "redis_acl_user" "example" {
 ### Optional
 
 - `acl_save` (Boolean) Whether to save the ACL user configuration to the disk on the Redis server. Defaults to `true`.
+- `categories` (List of String) ACL command categories for the user (e.g., 'read', 'write', 'pubsub'). Do not include `+@` prefix.
 - `channels` (List of String) Pub/Sub channel patterns the user can access (without `&` prefix).
-- `commands` (List of String) ACL command categories for the user (e.g., 'read', 'write', 'admin', 'pubsub'). Do not include `+@` or `-@` prefixes.
+- `commands` (List of String) ACL commands for the user (e.g., 'config|get', 'keys', 'all'). Do not include `+` prefix.
 - `enabled` (Boolean) Whether the ACL user is enabled. Defaults to `true`.
+- `excluded_commands` (List of String) ACL commands to exclude for the user (e.g., 'config|get', 'keys', 'all'). Do not include `-` prefix.
 - `keys` (List of String) Key patterns the user can access (without `~` prefix).
 - `readonly_keys` (List of String) Key patterns the user can only read (without `%R~` prefix).
 - `writeonly_keys` (List of String) Key patterns the user can only write (without `%W~` prefix).

@@ -33,6 +33,8 @@ type RedisAclUserResourceModel struct {
 	PasswordWo        types.String `tfsdk:"password_wo"`
 	PasswordWoVersion types.String `tfsdk:"password_wo_version"`
 	Commands          types.List   `tfsdk:"commands"`
+	ExcludedCommands  types.List   `tfsdk:"excluded_commands"`
+	Categories        types.List   `tfsdk:"categories"`
 	Keys              types.List   `tfsdk:"keys"`
 	ReadonlyKeys      types.List   `tfsdk:"readonly_keys"`
 	WriteonlyKeys     types.List   `tfsdk:"writeonly_keys"`
@@ -78,7 +80,25 @@ func (r *RedisAclUserResource) Schema(ctx context.Context, req resource.SchemaRe
 				Optional:    true,
 				Computed:    true,
 				ElementType: types.StringType,
-				Description: "ACL commands for the user (e.g., 'read', 'write', 'admin').",
+				Description: "ACL commands for the user (e.g., 'config|get', 'keys', 'all').",
+				PlanModifiers: []planmodifier.List{
+					listplanmodifier.UseStateForUnknown(),
+				},
+			},
+			"excluded_commands": schema.ListAttribute{
+				Optional:    true,
+				Computed:    true,
+				ElementType: types.StringType,
+				Description: "ACL commands to exclude for the user (e.g., 'config|get', 'keys', 'all').",
+				PlanModifiers: []planmodifier.List{
+					listplanmodifier.UseStateForUnknown(),
+				},
+			},
+			"categories": schema.ListAttribute{
+				Optional:    true,
+				Computed:    true,
+				ElementType: types.StringType,
+				Description: "ACL categories for the user (e.g., 'read', 'write', 'admin').",
 				PlanModifiers: []planmodifier.List{
 					listplanmodifier.UseStateForUnknown(),
 				},
@@ -309,9 +329,17 @@ func loadAclMapIntoState(ctx context.Context, aclMap map[string]any, state *Redi
 	enabled := parseEnabledFromFlags(aclMap)
 	state.Enabled = types.BoolValue(enabled)
 
-	commands := parseCommandsFromAclMap(aclMap)
+	categories, commands, excludedCommands := parseCommandsFromAclMap(aclMap)
 	if commandsList, err := convertToTypesList(ctx, commands, diags); err == nil {
 		state.Commands = commandsList
+	}
+
+	if excludedCommandsList, err := convertToTypesList(ctx, excludedCommands, diags); err == nil {
+		state.ExcludedCommands = excludedCommandsList
+	}
+
+	if categoriesList, err := convertToTypesList(ctx, categories, diags); err == nil {
+		state.Categories = categoriesList
 	}
 
 	keys, readonlyKeys, writeonlyKeys := parseKeysFromAclMap(aclMap)
@@ -361,23 +389,34 @@ func parseEnabledFromFlags(aclMap map[string]any) bool {
 	return false
 }
 
-func parseCommandsFromAclMap(aclMap map[string]any) []string {
+func parseCommandsFromAclMap(aclMap map[string]any) (
+	categories []string,
+	commands []string,
+	excludedCommands []string,
+) {
 	commandsData, ok := aclMap["commands"].(string)
-	commands := strings.Split(commandsData, " ")
-	if !ok {
-		return []string{}
+	if !ok || commandsData == "" {
+		return
 	}
 
-	var categoryStrs []string
-	for _, catStr := range commands {
-		trimmed := strings.TrimPrefix(catStr, "+@")
-		trimmed = strings.TrimPrefix(trimmed, "-@")
-		if strings.HasPrefix(catStr, "+@") {
-			categoryStrs = append(categoryStrs, trimmed)
+	tokens := strings.Split(commandsData, " ")
+
+	for _, token := range tokens {
+		switch {
+		case strings.HasPrefix(token, "-@"):
+			continue
+		case strings.HasPrefix(token, "+@"):
+			categories = append(categories, strings.TrimPrefix(token, "+@"))
+
+		case strings.HasPrefix(token, "-"):
+			excludedCommands = append(excludedCommands, strings.TrimPrefix(token, "-"))
+
+		case strings.HasPrefix(token, "+"):
+			commands = append(commands, strings.TrimPrefix(token, "+"))
 		}
 	}
 
-	return categoryStrs
+	return
 }
 
 func parseKeysFromAclMap(aclMap map[string]any) (keys, readonlyKeys, writeonlyKeys []string) {
@@ -467,11 +506,13 @@ func buildACLRules(m *RedisAclUserResourceModel, hashedPasswords []string) []str
 	appendList("%W~", toStringList(m.WriteonlyKeys))
 	appendList("&", toStringList(m.Channels))
 
-	commands := toStringList(m.Commands)
-	if stringInList("all", commands) {
+	categories := toStringList(m.Categories)
+	if stringInList("all", categories) {
 		rules = append(rules, "+@all")
 	} else {
-		appendList("+@", commands)
+		appendList("+@", categories)
+		appendList("+", toStringList(m.Commands))
+		appendList("-", toStringList(m.ExcludedCommands))
 	}
 
 	return rules

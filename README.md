@@ -26,7 +26,9 @@ This resource manages a Redis ACL user.
 * `password_wo` (String, Required, Sensitive, Write-only) Write-only password for the ACL user. The provider hashes this password with SHA256 before storing it in Redis.
 * `password_wo_version` (String, Required) Version string for the password. Changing this value forces a password update (and resource update) even if `password_wo` hasn't changed in the configuration. Use this to trigger rotation.
 * `enabled` (Boolean, Optional) Whether the ACL user is enabled. Defaults to `true`.
-* `commands` (List of String, Optional) ACL command categories for the user (e.g., `read`, `write`, `admin`, `pubsub`). Do not include `+@` or `-@` prefixes.
+* `categories` (List of String, Optional) ACL command categories for the user (e.g., `read`, `write`, `admin`, `pubsub`).
+* `commands` (List of String, Optional) ACL commands for the user (e.g., 'config|get', 'keys', 'all').
+* `excluded_commands` (List of String, Optional) ACL commands to exclude for the user (e.g., 'config|get', 'keys', 'all').
 * `keys` (List of String, Optional) Key patterns the user can access.
 * `readonly_keys` (List of String, Optional) Key patterns the user can only read.
 * `writeonly_keys` (List of String, Optional) Key patterns the user can only write.
@@ -80,8 +82,9 @@ resource "redis_acl_user" "example" {
   password_wo         = "strong-password"
   password_wo_version = "v1"
 
-  commands = ["read", "write", "pubsub"]
-  keys     = ["app:*", "cache:*"]
-  channels = ["notifications"]
+  categories = ["read", "write", "pubsub"]
+  commands   = ["config|get"]
+  keys       = ["app:*", "cache:*"]
+  channels   = ["notifications"]
 }
 ```

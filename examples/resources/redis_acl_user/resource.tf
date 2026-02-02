@@ -22,7 +22,9 @@ resource "redis_acl_user" "user" {
   name                = "newuser"
   password_wo         = ephemeral.random_password.password.result
   password_wo_version = "2"
-  commands            = ["write", "read", "pubsub"]
+  categories          = ["write", "read", "pubsub"]
+  commands            = ["config|get"]
+  excluded_commands   = ["config|set"]
   keys                = ["app:*"]
   readonly_keys       = ["readonly:*"]
   writeonly_keys      = ["writeonly:*"]

@@ -144,17 +144,17 @@ func TestBuildACLRules(t *testing.T) {
 		assert.Contains(t, rules, "#"+passwordHash)
 	})
 
-	t.Run("builds rules with commands", func(t *testing.T) {
-		commands, _ := types.ListValueFrom(
+	t.Run("builds rules with categories", func(t *testing.T) {
+		categories, _ := types.ListValueFrom(
 			context.Background(),
 			types.StringType,
 			[]string{"get", "set"},
 		)
 
 		model := &RedisAclUserResourceModel{
-			Name:     types.StringValue("testuser"),
-			Enabled:  types.BoolValue(true),
-			Commands: commands,
+			Name:       types.StringValue("testuser"),
+			Enabled:    types.BoolValue(true),
+			Categories: categories,
 		}
 
 		rules := buildACLRules(model, []string{})
@@ -202,10 +202,20 @@ func TestBuildACLRules(t *testing.T) {
 	})
 
 	t.Run("builds comprehensive rules", func(t *testing.T) {
+		categories, _ := types.ListValueFrom(
+			context.Background(),
+			types.StringType,
+			[]string{"read", "write"},
+		)
 		commands, _ := types.ListValueFrom(
 			context.Background(),
 			types.StringType,
-			[]string{"get", "set"},
+			[]string{"config|get"},
+		)
+		excludedCommands, _ := types.ListValueFrom(
+			context.Background(),
+			types.StringType,
+			[]string{"config|set"},
 		)
 		keys, _ := types.ListValueFrom(
 			context.Background(),
@@ -223,7 +233,9 @@ func TestBuildACLRules(t *testing.T) {
 			Enabled:           types.BoolValue(true),
 			PasswordWo:        types.StringValue("mypassword"),
 			PasswordWoVersion: types.StringValue("v1"),
+			Categories:        categories,
 			Commands:          commands,
+			ExcludedCommands:  excludedCommands,
 			Keys:              keys,
 			Channels:          channels,
 		}
@@ -234,8 +246,10 @@ func TestBuildACLRules(t *testing.T) {
 
 		assert.Contains(t, rules, "on")
 		assert.Contains(t, rules, "reset")
-		assert.Contains(t, rules, "+@get")
-		assert.Contains(t, rules, "+@set")
+		assert.Contains(t, rules, "+@read")
+		assert.Contains(t, rules, "+@write")
+		assert.Contains(t, rules, "+config|get")
+		assert.Contains(t, rules, "-config|set")
 		assert.Contains(t, rules, "~app:*")
 		assert.Contains(t, rules, "&notifications:*")
 	})
@@ -408,25 +422,47 @@ func TestParseEnabledFromFlags(t *testing.T) {
 	})
 }
 
-func TestParseCommandsFromAclMap(t *testing.T) {
-	t.Run("parses command categories with + prefix", func(t *testing.T) {
+func TestParseCategoriesFromAclMap(t *testing.T) {
+	t.Run("parses command categories with +@ prefix", func(t *testing.T) {
 		aclMap := map[string]any{
-			"commands": "+@read +@write +@admin",
+			"commands": "+@read -config|set +@write +config|get +@admin",
 		}
 
-		commands := parseCommandsFromAclMap(aclMap)
+		categories, _, _ := parseCommandsFromAclMap(aclMap)
 
-		assert.ElementsMatch(t, []string{"read", "write", "admin"}, commands)
+		assert.ElementsMatch(t, []string{"read", "write", "admin"}, categories)
 	})
 
-	t.Run("ignores commands with - prefix", func(t *testing.T) {
+	t.Run("ignores commands with -@ prefix", func(t *testing.T) {
 		aclMap := map[string]any{
-			"commands": "+@read -@write +@admin",
+			"commands": "+@read -config|set -@write +config|get +@admin",
 		}
 
-		commands := parseCommandsFromAclMap(aclMap)
+		categories, _, _ := parseCommandsFromAclMap(aclMap)
 
-		assert.ElementsMatch(t, []string{"read", "admin"}, commands)
+		assert.ElementsMatch(t, []string{"read", "admin"}, categories)
+	})
+}
+
+func TestParseCommandsFromAclMap(t *testing.T) {
+	t.Run("parses commands with + prefix", func(t *testing.T) {
+		aclMap := map[string]any{
+			"commands": "+@read -config|set +@write +config|get +@admin",
+		}
+
+		_, commands, _ := parseCommandsFromAclMap(aclMap)
+
+		assert.ElementsMatch(t, []string{"config|get"}, commands)
+	})
+
+	t.Run("parses commands with - prefix", func(t *testing.T) {
+		aclMap := map[string]any{
+			"commands": "+@read -config|set +@write +config|get +@admin",
+		}
+
+		_, _, excludedCommands := parseCommandsFromAclMap(aclMap)
+
+		assert.ElementsMatch(t, []string{"config|set"}, excludedCommands)
 	})
 }
 
